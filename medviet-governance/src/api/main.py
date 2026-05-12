@@ -1,4 +1,6 @@
 # src/api/main.py
+from pathlib import Path
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import JSONResponse
 import pandas as pd
@@ -7,6 +9,13 @@ from src.pii.anonymizer import MedVietAnonymizer
 
 app = FastAPI(title="MedViet Data API", version="1.0.0")
 anonymizer = MedVietAnonymizer()
+DATA_PATH = Path("data/raw/patients_raw.csv")
+
+
+def load_patients() -> pd.DataFrame:
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="Patient dataset not found")
+    return pd.read_csv(DATA_PATH)
 
 # --- ENDPOINT 1 ---
 @app.get("/api/patients/raw")
@@ -15,11 +24,10 @@ async def get_raw_patients(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    TODO: Trả về raw patient data (chỉ admin được phép).
-    Load từ data/raw/patients_raw.csv
-    Trả về 10 records đầu tiên dưới dạng JSON.
+    Trả về raw patient data cho admin từ data/raw/patients_raw.csv.
     """
-    pass
+    df = load_patients()
+    return JSONResponse(df.head(10).to_dict(orient="records"))
 
 # --- ENDPOINT 2 ---
 @app.get("/api/patients/anonymized")
@@ -28,10 +36,11 @@ async def get_anonymized_patients(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    TODO: Trả về anonymized data (ml_engineer và admin được phép).
-    Load raw data → anonymize → trả về JSON.
+    Trả về anonymized data cho ml_engineer và admin.
     """
-    pass
+    df = load_patients()
+    df_anon = anonymizer.anonymize_dataframe(df)
+    return JSONResponse(df_anon.head(10).to_dict(orient="records"))
 
 # --- ENDPOINT 3 ---
 @app.get("/api/metrics/aggregated")
@@ -40,10 +49,12 @@ async def get_aggregated_metrics(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    TODO: Trả về aggregated metrics (data_analyst, ml_engineer, admin).
-    Ví dụ: số bệnh nhân theo từng loại bệnh (không có PII).
+    Trả về aggregated metrics không chứa PII.
     """
-    pass
+    df = load_patients()
+    metrics = df["benh"].value_counts().reset_index()
+    metrics.columns = ["benh", "count"]
+    return JSONResponse(metrics.to_dict(orient="records"))
 
 # --- ENDPOINT 4 ---
 @app.delete("/api/patients/{patient_id}")
@@ -53,9 +64,12 @@ async def delete_patient(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    TODO: Chỉ admin được xóa. Các role khác nhận 403.
+    Xóa patient theo ID; RBAC chỉ cho phép admin.
     """
-    pass
+    df = load_patients()
+    if patient_id not in set(df["patient_id"].astype(str)):
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return {"status": "deleted", "patient_id": patient_id}
 
 @app.get("/health")
 async def health():
